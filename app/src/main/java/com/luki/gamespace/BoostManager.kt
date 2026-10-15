@@ -2,6 +2,7 @@ package com.luki.gamespace
 
 import android.Manifest
 import android.app.ActivityManager
+import android.app.AppOpsManager
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
@@ -9,6 +10,8 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.BatteryManager
 import android.os.Build
+import android.os.PowerManager
+import android.os.Process
 import android.provider.Settings
 import androidx.core.content.ContextCompat
 
@@ -22,24 +25,42 @@ data class Stats(
 
 data class Perms(
     val overlay: Boolean = false,
+    val usage: Boolean = false,
     val dnd: Boolean = false,
     val write: Boolean = false,
-    val notif: Boolean = false
+    val notif: Boolean = false,
+    val battery: Boolean = false
 )
 
 object Prefs {
     private fun p(c: Context) = c.getSharedPreferences("settings", Context.MODE_PRIVATE)
+
     fun mode(c: Context): BoostManager.Mode =
         runCatching { BoostManager.Mode.valueOf(p(c).getString("mode", "BALANCED")!!) }
             .getOrDefault(BoostManager.Mode.BALANCED)
     fun setMode(c: Context, m: BoostManager.Mode) { p(c).edit().putString("mode", m.name).apply() }
-    fun overlay(c: Context) = p(c).getBoolean("overlay", true)
+
+    /** HUD teks kecil di atas game */
+    fun overlay(c: Context) = p(c).getBoolean("overlay", false)
     fun setOverlay(c: Context, v: Boolean) { p(c).edit().putBoolean("overlay", v).apply() }
+
+    fun sidebar(c: Context) = p(c).getBoolean("sidebar", true)
+    fun setSidebar(c: Context, v: Boolean) { p(c).edit().putBoolean("sidebar", v).apply() }
+
+    fun autoBoost(c: Context) = p(c).getBoolean("auto_boost", true)
+    fun setAutoBoost(c: Context, v: Boolean) { p(c).edit().putBoolean("auto_boost", v).apply() }
+
+    /** "L" atau "R" */
+    fun side(c: Context) = p(c).getString("side", "L") ?: "L"
+    fun setSide(c: Context, v: String) { p(c).edit().putString("side", v).apply() }
+
+    fun handleY(c: Context) = p(c).getFloat("handle_y", 0.35f)
+    fun setHandleY(c: Context, v: Float) { p(c).edit().putFloat("handle_y", v).apply() }
 }
 
 object BoostManager {
     enum class Mode(val label: String, val desc: String) {
-        STANDARD("Standard", "Tanpa tweak. Cuma jalanin game + overlay."),
+        STANDARD("Standard", "Tanpa tweak sistem. Cuma sidebar & monitor."),
         BALANCED("Balanced", "Bersihin RAM background + mode jangan ganggu (DND) pas main."),
         EXTREME("Extreme", "Balanced + brightness layar dinaikkin ke max. Boros baterai & panas.")
     }
@@ -48,16 +69,31 @@ object BoostManager {
     private const val TAG = "Boost"
 
     fun isActive(c: Context) = sp(c).getBoolean("active", false)
+    fun isAuto(c: Context) = sp(c).getBoolean("auto", false)
+
+    fun hasUsageAccess(c: Context): Boolean = runCatching {
+        val ops = c.getSystemService(AppOpsManager::class.java)
+        val m = if (Build.VERSION.SDK_INT >= 29) {
+            ops.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), c.packageName)
+        } else {
+            @Suppress("DEPRECATION")
+            ops.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), c.packageName)
+        }
+        m == AppOpsManager.MODE_ALLOWED
+    }.getOrDefault(false)
 
     fun perms(c: Context): Perms {
         val nm = c.getSystemService(NotificationManager::class.java)
         val notif = Build.VERSION.SDK_INT < 33 ||
             ContextCompat.checkSelfPermission(c, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        val pm = c.getSystemService(PowerManager::class.java)
         return Perms(
             overlay = Settings.canDrawOverlays(c),
+            usage = hasUsageAccess(c),
             dnd = nm.isNotificationPolicyAccessGranted,
             write = Settings.System.canWrite(c),
-            notif = notif
+            notif = notif,
+            battery = pm.isIgnoringBatteryOptimizations(c.packageName)
         )
     }
 
@@ -80,7 +116,7 @@ object BoostManager {
         )
     }
 
-    /** returns (jumlah app ditutup, MB RAM yang bertambah) */
+    /** returns (jumlah app dikirim kill, MB RAM yang bertambah) */
     fun cleanRam(c: Context, exclude: Set<String>): Pair<Int, Long> {
         return try {
             val am = c.getSystemService(ActivityManager::class.java)
@@ -104,89 +140,139 @@ object BoostManager {
         }
     }
 
-    fun activate(c: Context, mode: Mode, overlay: Boolean, exclude: Set<String>) {
-        try {
-            val sp = sp(c)
-            val first = !sp.getBoolean("active", false)
-            CrashLogger.log(c, "I", TAG, "Activate mode=${mode.name} overlay=$overlay")
+    // ---------- DND ----------
+    fun isDndOn(c: Context): Boolean {
+        val nm = c.getSystemService(NotificationManager::class.java)
+        if (!nm.isNotificationPolicyAccessGranted) return false
+        val f = nm.currentInterruptionFilter
+        return f != NotificationManager.INTERRUPTION_FILTER_ALL && f != NotificationManager.INTERRUPTION_FILTER_UNKNOWN
+    }
 
+    /** true=sekarang ON, false=OFF, null=izin belum ada */
+    fun toggleDnd(c: Context): Boolean? {
+        val nm = c.getSystemService(NotificationManager::class.java)
+        if (!nm.isNotificationPolicyAccessGranted) return null
+        val on = isDndOn(c)
+        nm.setInterruptionFilter(
+            if (on) NotificationManager.INTERRUPTION_FILTER_ALL else NotificationManager.INTERRUPTION_FILTER_PRIORITY
+        )
+        return !on
+    }
+
+    private fun enableDnd(c: Context) {
+        runCatching {
+            val sp = sp(c)
+            val nm = c.getSystemService(NotificationManager::class.java)
+            if (nm.isNotificationPolicyAccessGranted) {
+                if (!sp.getBoolean("dnd_changed", false)) {
+                    sp.edit().putInt("prev_dnd", nm.currentInterruptionFilter).putBoolean("dnd_changed", true).commit()
+                }
+                nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_PRIORITY)
+                CrashLogger.log(c, "I", TAG, "DND aktif")
+            } else {
+                CrashLogger.log(c, "W", TAG, "Izin DND belum diberikan, dilewati")
+            }
+        }.onFailure { CrashLogger.log(c, "E", TAG, "DND gagal", it) }
+    }
+
+    private fun restoreDnd(c: Context) {
+        runCatching {
+            val sp = sp(c)
+            if (sp.getBoolean("dnd_changed", false)) {
+                val nm = c.getSystemService(NotificationManager::class.java)
+                if (nm.isNotificationPolicyAccessGranted) {
+                    val prev = sp.getInt("prev_dnd", NotificationManager.INTERRUPTION_FILTER_ALL)
+                    nm.setInterruptionFilter(if (prev == 0) NotificationManager.INTERRUPTION_FILTER_ALL else prev)
+                }
+                sp.edit().putBoolean("dnd_changed", false).commit()
+            }
+        }.onFailure { CrashLogger.log(c, "E", TAG, "Restore DND gagal", it) }
+    }
+
+    // ---------- Brightness ----------
+    private fun enableBrightMax(c: Context) {
+        runCatching {
+            if (Settings.System.canWrite(c)) {
+                val sp = sp(c)
+                val cr = c.contentResolver
+                if (!sp.getBoolean("br_changed", false)) {
+                    sp.edit()
+                        .putInt("prev_br", Settings.System.getInt(cr, Settings.System.SCREEN_BRIGHTNESS, 128))
+                        .putInt("prev_br_mode", Settings.System.getInt(cr, Settings.System.SCREEN_BRIGHTNESS_MODE, 0))
+                        .putBoolean("br_changed", true)
+                        .commit()
+                }
+                Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
+                Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS, 255)
+                CrashLogger.log(c, "I", TAG, "Brightness max")
+            } else {
+                CrashLogger.log(c, "W", TAG, "Izin WRITE_SETTINGS belum diberikan, brightness dilewati")
+            }
+        }.onFailure { CrashLogger.log(c, "E", TAG, "Brightness gagal", it) }
+    }
+
+    private fun restoreBrightness(c: Context) {
+        runCatching {
+            val sp = sp(c)
+            if (sp.getBoolean("br_changed", false)) {
+                if (Settings.System.canWrite(c)) {
+                    val cr = c.contentResolver
+                    Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS_MODE, sp.getInt("prev_br_mode", 0))
+                    Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS, sp.getInt("prev_br", 128))
+                }
+                sp.edit().putBoolean("br_changed", false).commit()
+            }
+        }.onFailure { CrashLogger.log(c, "E", TAG, "Restore brightness gagal", it) }
+    }
+
+    /**
+     * auto=true  -> boost ikut dimatikan otomatis pas keluar dari game (kalau service sidebar jalan)
+     * auto=false -> boost manual, dimatikan manual
+     */
+    @Synchronized
+    fun activate(c: Context, mode: Mode, auto: Boolean, exclude: Set<String>) {
+        try {
+            CrashLogger.log(c, "I", TAG, "Activate mode=${mode.name} auto=$auto")
             if (mode != Mode.STANDARD) {
                 cleanRam(c, exclude)
-                runCatching {
-                    val nm = c.getSystemService(NotificationManager::class.java)
-                    if (nm.isNotificationPolicyAccessGranted) {
-                        if (first) sp.edit().putInt("prev_dnd", nm.currentInterruptionFilter).putBoolean("dnd_changed", true).commit()
-                        nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_PRIORITY)
-                        CrashLogger.log(c, "I", TAG, "DND aktif")
-                    } else {
-                        CrashLogger.log(c, "W", TAG, "Izin DND belum diberikan, dilewati")
-                    }
-                }.onFailure { CrashLogger.log(c, "E", TAG, "DND gagal", it) }
+                enableDnd(c)
+            } else {
+                restoreDnd(c)
             }
-
-            if (mode == Mode.EXTREME) {
-                runCatching {
-                    if (Settings.System.canWrite(c)) {
-                        val cr = c.contentResolver
-                        if (first) {
-                            sp.edit()
-                                .putInt("prev_br", Settings.System.getInt(cr, Settings.System.SCREEN_BRIGHTNESS, 128))
-                                .putInt("prev_br_mode", Settings.System.getInt(cr, Settings.System.SCREEN_BRIGHTNESS_MODE, 0))
-                                .putBoolean("br_changed", true)
-                                .commit()
-                        }
-                        Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
-                        Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS, 255)
-                        CrashLogger.log(c, "I", TAG, "Brightness max")
-                    } else {
-                        CrashLogger.log(c, "W", TAG, "Izin WRITE_SETTINGS belum diberikan, brightness dilewati")
-                    }
-                }.onFailure { CrashLogger.log(c, "E", TAG, "Brightness gagal", it) }
-            }
-
-            sp.edit().putBoolean("active", true).commit()
-            if (overlay) startOverlay(c)
+            if (mode == Mode.EXTREME) enableBrightMax(c) else restoreBrightness(c)
+            sp(c).edit().putBoolean("active", true).putBoolean("auto", auto).commit()
         } catch (t: Throwable) {
             CrashLogger.log(c, "E", TAG, "Activate gagal", t)
         }
     }
 
+    @Synchronized
     fun deactivate(c: Context) {
         try {
-            val sp = sp(c)
             CrashLogger.log(c, "I", TAG, "Deactivate")
-            if (sp.getBoolean("dnd_changed", false)) {
-                runCatching {
-                    val nm = c.getSystemService(NotificationManager::class.java)
-                    if (nm.isNotificationPolicyAccessGranted) {
-                        nm.setInterruptionFilter(sp.getInt("prev_dnd", NotificationManager.INTERRUPTION_FILTER_ALL))
-                    }
-                }.onFailure { CrashLogger.log(c, "E", TAG, "Restore DND gagal", it) }
-            }
-            if (sp.getBoolean("br_changed", false)) {
-                runCatching {
-                    if (Settings.System.canWrite(c)) {
-                        val cr = c.contentResolver
-                        Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS_MODE, sp.getInt("prev_br_mode", 0))
-                        Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS, sp.getInt("prev_br", 128))
-                    }
-                }.onFailure { CrashLogger.log(c, "E", TAG, "Restore brightness gagal", it) }
-            }
-            sp.edit().putBoolean("active", false).putBoolean("dnd_changed", false).putBoolean("br_changed", false).commit()
-            stopOverlay(c)
+            restoreDnd(c)
+            restoreBrightness(c)
+            sp(c).edit().putBoolean("active", false).putBoolean("auto", false).commit()
         } catch (t: Throwable) {
             CrashLogger.log(c, "E", TAG, "Deactivate gagal", t)
         }
     }
 
+    // ---------- Service ----------
+    fun serviceWanted(c: Context): Boolean =
+        (Prefs.sidebar(c) || Prefs.overlay(c)) && Settings.canDrawOverlays(c) && hasUsageAccess(c)
+
+    /** Dipanggil dari UI (foreground) tiap detik: nyalain/matiin service sesuai pengaturan. */
+    fun syncService(c: Context) {
+        val enabled = Prefs.sidebar(c) || Prefs.overlay(c)
+        if (serviceWanted(c) && !OverlayService.running) startOverlay(c)
+        else if (!enabled && OverlayService.running) stopOverlay(c)
+    }
+
     fun startOverlay(c: Context) {
         runCatching {
-            if (!Settings.canDrawOverlays(c)) {
-                CrashLogger.log(c, "W", TAG, "Izin overlay belum diberikan, overlay dilewati")
-                return
-            }
             ContextCompat.startForegroundService(c, Intent(c, OverlayService::class.java))
-        }.onFailure { CrashLogger.log(c, "E", TAG, "Start overlay gagal", it) }
+        }.onFailure { CrashLogger.log(c, "E", TAG, "Start service gagal", it) }
     }
 
     fun stopOverlay(c: Context) {

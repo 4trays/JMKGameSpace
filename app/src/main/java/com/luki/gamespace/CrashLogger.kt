@@ -60,6 +60,44 @@ object CrashLogger {
         c.getSharedPreferences("crash", Context.MODE_PRIVATE).edit().putBoolean("pending", false).apply()
     }
 
+    private fun reasonName(r: Int) = when (r) {
+        1 -> "EXIT_SELF"
+        2 -> "SIGNALED"
+        3 -> "LOW_MEMORY"
+        4 -> "CRASH"
+        5 -> "CRASH_NATIVE"
+        6 -> "ANR"
+        7 -> "INITIALIZATION_FAILURE"
+        8 -> "PERMISSION_CHANGE"
+        9 -> "EXCESSIVE_RESOURCE_USAGE"
+        10 -> "USER_REQUESTED"
+        11 -> "USER_STOPPED"
+        12 -> "DEPENDENCY_DIED"
+        13 -> "OTHER"
+        14 -> "FREEZER"
+        15 -> "PACKAGE_STATE_CHANGE"
+        16 -> "PACKAGE_UPDATED"
+        else -> "UNKNOWN($r)"
+    }
+
+    /** Catat kenapa proses app sebelumnya mati (Android 11+). Bantu diagnosa "kebunuh pas main game". */
+    fun logExitReasons(c: Context) {
+        if (Build.VERSION.SDK_INT < 30) return
+        runCatching {
+            val am = c.getSystemService(android.app.ActivityManager::class.java)
+            val sp = c.getSharedPreferences("crash", Context.MODE_PRIVATE)
+            val last = sp.getLong("last_exit_ts", 0L)
+            var newest = last
+            for (r in am.getHistoricalProcessExitReasons(c.packageName, 0, 5).reversed()) {
+                if (r.timestamp > last) {
+                    log(c, "W", "Exit", "Proses sebelumnya mati: ${reasonName(r.reason)} | proc=${r.processName} | ${r.description}")
+                    if (r.timestamp > newest) newest = r.timestamp
+                }
+            }
+            sp.edit().putLong("last_exit_ts", newest).apply()
+        }
+    }
+
     fun install(app: Application) {
         Thread.setDefaultUncaughtExceptionHandler { thread, e ->
             runCatching {

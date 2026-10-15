@@ -12,6 +12,7 @@ class GameSpaceApp : Application() {
                 this, "I", "App",
                 "Start | ${Build.MANUFACTURER} ${Build.MODEL} | Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
             )
+            CrashLogger.logExitReasons(this)
         }
     }
 }

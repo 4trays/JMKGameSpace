@@ -80,8 +80,14 @@ import kotlinx.coroutines.withContext
 fun BoostTab(
     mode: BoostManager.Mode,
     onMode: (BoostManager.Mode) -> Unit,
-    overlayOn: Boolean,
-    onOverlay: (Boolean) -> Unit
+    sidebarOn: Boolean,
+    onSidebar: (Boolean) -> Unit,
+    hudOn: Boolean,
+    onHud: (Boolean) -> Unit,
+    autoOn: Boolean,
+    onAuto: (Boolean) -> Unit,
+    side: String,
+    onSide: (String) -> Unit
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -96,16 +102,21 @@ fun BoostTab(
     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     fun open(action: String, withPkg: Boolean) {
-        runCatching {
+        val pkgUri = Uri.parse("package:${ctx.packageName}")
+        val ok = runCatching {
             val i = Intent(action)
-            if (withPkg) i.data = Uri.parse("package:${ctx.packageName}")
+            if (withPkg) i.data = pkgUri
             ctx.startActivity(i)
-        }.onFailure { CrashLogger.log(ctx, "E", "Perm", "Gagal buka $action", it) }
+        }.isSuccess
+        if (!ok) {
+            runCatching { ctx.startActivity(Intent(action)) }
+                .onFailure { CrashLogger.log(ctx, "E", "Perm", "Gagal buka $action", it) }
+        }
     }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         SectionTitle("PERFORMANCE MODE", "")
         ModeSelector(mode, onMode)
@@ -115,20 +126,14 @@ fun BoostTab(
             label = "desc"
         ) { m -> Text(m.desc, color = Dim, fontSize = 12.sp) }
 
+        SectionTitle("SMART SIDEBAR", "")
+        ToggleRow("Smart Sidebar", "Panel samping, cuma muncul di game yang kamu add", sidebarOn, onSidebar)
+        ToggleRow("Auto-boost", "Boost otomatis pas game dibuka, restore pas keluar", autoOn, onAuto)
+        ToggleRow("HUD monitor", "Teks suhu/RAM/baterai kecil di atas game", hudOn, onHud)
+        Text("POSISI SIDEBAR", color = Dim, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+        SideSelector(side, onSide)
+
         SectionTitle("TOOLS", "")
-        Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Panel).padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("Overlay monitor", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                Text("Suhu, RAM, baterai, refresh rate di atas game", color = Dim, fontSize = 11.sp)
-            }
-            Switch(
-                checked = overlayOn, onCheckedChange = onOverlay,
-                colors = SwitchDefaults.colors(checkedTrackColor = Red, checkedThumbColor = Color.White)
-            )
-        }
         Button(
             onClick = {
                 if (!cleaning) {
@@ -152,17 +157,82 @@ fun BoostTab(
         }
 
         SectionTitle("IZIN", "")
-        PermRow("Tampil di atas app lain", "Wajib untuk overlay monitor", perms.overlay) {
+        PermRow("Tampil di atas app lain", "Wajib untuk sidebar & HUD", perms.overlay) {
             open(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, true)
+        }
+        PermRow("Akses penggunaan (Usage Access)", "Wajib: biar sidebar tau game mana yang lagi dibuka", perms.usage) {
+            open(Settings.ACTION_USAGE_ACCESS_SETTINGS, true)
+        }
+        PermRow("Abaikan optimasi baterai", "Biar sidebar nggak dimatiin sistem pas main", perms.battery) {
+            open(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, true)
         }
         PermRow("Akses Jangan Ganggu (DND)", "Untuk blokir notifikasi pas main", perms.dnd) {
             open(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS, false)
         }
-        PermRow("Ubah setelan sistem", "Untuk brightness max di mode Extreme", perms.write) {
+        PermRow("Ubah setelan sistem", "Untuk brightness (mode Extreme & slider sidebar)", perms.write) {
             open(Settings.ACTION_MANAGE_WRITE_SETTINGS, true)
         }
-        PermRow("Notifikasi", "Untuk tombol 'Matikan Boost'", perms.notif) {
+        PermRow("Notifikasi", "Untuk tombol 'Matikan' di notifikasi", perms.notif) {
             notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
+        Column(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Panel).padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text("TIPS VIVO / iQOO", color = Red, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 1.5.sp)
+            Text(
+                "Biar sidebar nggak dimatiin sistem: Settings > Baterai > Konsumsi daya latar belakang > Game Space > Izinkan. " +
+                    "Tambah ke Autostart, dan kunci app di Recent Apps (tahan kartu app, pilih kunci).",
+                color = Dim, fontSize = 11.sp, lineHeight = 16.sp
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun ToggleRow(title: String, desc: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Panel).padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text(desc, color = Dim, fontSize = 11.sp)
+        }
+        Switch(
+            checked = checked, onCheckedChange = onChange,
+            colors = SwitchDefaults.colors(checkedTrackColor = Red, checkedThumbColor = Color.White)
+        )
+    }
+}
+
+@Composable
+private fun SideSelector(side: String, onSide: (String) -> Unit) {
+    val opts = listOf("L" to "KIRI", "R" to "KANAN")
+    BoxWithConstraints(
+        Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(14.dp)).background(Panel2)
+    ) {
+        val w = maxWidth / 2
+        val x by animateDpAsState(if (side == "L") 0.dp else w, spring(dampingRatio = 0.7f), label = "sx")
+        Box(
+            Modifier.offset(x = x).width(w).fillMaxHeight().padding(4.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Brush.horizontalGradient(listOf(RedDark, Red)))
+        )
+        Row(Modifier.fillMaxSize()) {
+            opts.forEach { (k, label) ->
+                Box(
+                    Modifier.weight(1f).fillMaxHeight().clickable { onSide(k) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        label, color = if (side == k) Color.White else Dim,
+                        fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp
+                    )
+                }
+            }
         }
     }
 }
@@ -226,9 +296,15 @@ fun LogsTab() {
     val ctx = LocalContext.current
     val clip = LocalClipboardManager.current
     val lines by produceState(emptyList<String>()) {
+        var lastMod = -1L
         while (true) {
-            value = withContext(Dispatchers.IO) { CrashLogger.read(ctx) }
-            delay(1500)
+            val f = CrashLogger.file(ctx)
+            val m = if (f.exists()) f.lastModified() else 0L
+            if (m != lastMod) {
+                lastMod = m
+                value = withContext(Dispatchers.IO) { CrashLogger.read(ctx) }
+            }
+            delay(3000)
         }
     }
     val state = rememberLazyListState()

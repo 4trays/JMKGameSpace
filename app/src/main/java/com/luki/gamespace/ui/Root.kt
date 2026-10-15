@@ -1,5 +1,8 @@
 package com.luki.gamespace.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -90,28 +93,38 @@ fun AppRoot() {
     val scope = rememberCoroutineScope()
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var mode by remember { mutableStateOf(Prefs.mode(ctx)) }
-    var overlayOn by remember { mutableStateOf(Prefs.overlay(ctx)) }
-    var games by remember { mutableStateOf<List<GameItem>>(emptyList()) }
+        var games by remember { mutableStateOf<List<GameItem>>(emptyList()) }
     var launching by remember { mutableStateOf<GameItem?>(null) }
     var boostActive by remember { mutableStateOf(BoostManager.isActive(ctx)) }
     var crashPending by remember { mutableStateOf(CrashLogger.hasPendingCrash(ctx)) }
+    var sidebarOn by remember { mutableStateOf(Prefs.sidebar(ctx)) }
+    var hudOn by remember { mutableStateOf(Prefs.overlay(ctx)) }
+    var autoOn by remember { mutableStateOf(Prefs.autoBoost(ctx)) }
+    var side by remember { mutableStateOf(Prefs.side(ctx)) }
+    val fg = AppState.foreground
     var showAdd by remember { mutableStateOf(false) }
     var removeTarget by remember { mutableStateOf<GameItem?>(null) }
     val launchP = remember { Animatable(0f) }
 
-    val stats by produceState(Stats()) {
-        while (true) {
-            value = withContext(Dispatchers.Default) { BoostManager.stats(ctx) }
-            delay(1500)
+    val stats by produceState(Stats(), fg) {
+        if (fg) {
+            while (true) {
+                value = withContext(Dispatchers.Default) { BoostManager.stats(ctx) }
+                delay(2000)
+            }
         }
     }
 
     LaunchedEffect(Unit) {
         games = withContext(Dispatchers.Default) { GameRepo.loadSaved(ctx) }
     }
-    LaunchedEffect(Unit) {
+    LaunchedEffect(fg) {
+        if (!fg) return@LaunchedEffect
         while (true) {
             boostActive = BoostManager.isActive(ctx)
+            sidebarOn = Prefs.sidebar(ctx)
+            hudOn = Prefs.overlay(ctx)
+            BoostManager.syncService(ctx)
             delay(1000)
         }
     }
@@ -119,17 +132,24 @@ fun AppRoot() {
     LaunchedEffect(launching) {
         val g = launching ?: return@LaunchedEffect
         launchP.snapTo(0f)
+        BoostManager.syncService(ctx)
+        val svc = BoostManager.serviceWanted(ctx)
         val job = async(Dispatchers.Default) {
-            runCatching { BoostManager.activate(ctx, mode, overlayOn, setOf(g.pkg)) }
+            runCatching { BoostManager.activate(ctx, mode, svc, setOf(g.pkg)) }
         }
-        launchP.animateTo(1f, tween(800, easing = FastOutSlowInEasing))
+        launchP.animateTo(1f, tween(700, easing = FastOutSlowInEasing))
         job.await()
         val ok = BoostManager.launchGame(ctx, g.pkg)
-        if (!ok) Toast.makeText(ctx, "Gagal membuka ${g.label}, cek Logs", Toast.LENGTH_LONG).show()
         boostActive = BoostManager.isActive(ctx)
-        delay(400)
-        launching = null
-        launchP.snapTo(0f)
+        if (!ok) {
+            Toast.makeText(ctx, "Gagal membuka ${g.label}, cek Logs", Toast.LENGTH_LONG).show()
+            launching = null
+            launchP.snapTo(0f)
+        } else {
+            // tutup UI biar memori kosong; sidebar tetap hidup di service
+            delay(300)
+            ctx.findActivity()?.finish()
+        }
     }
 
     Box(Modifier.fillMaxSize().background(Bg)) {
@@ -163,7 +183,7 @@ fun AppRoot() {
                                 scope.launch {
                                     withContext(Dispatchers.Default) {
                                         if (BoostManager.isActive(ctx)) BoostManager.deactivate(ctx)
-                                        else BoostManager.activate(ctx, mode, overlayOn, emptySet())
+                                        else BoostManager.activate(ctx, mode, false, emptySet())
                                     }
                                     boostActive = BoostManager.isActive(ctx)
                                 }
@@ -175,8 +195,14 @@ fun AppRoot() {
                         1 -> BoostTab(
                             mode = mode,
                             onMode = { mode = it; Prefs.setMode(ctx, it) },
-                            overlayOn = overlayOn,
-                            onOverlay = { overlayOn = it; Prefs.setOverlay(ctx, it) }
+                            sidebarOn = sidebarOn,
+                            onSidebar = { sidebarOn = it; Prefs.setSidebar(ctx, it) },
+                            hudOn = hudOn,
+                            onHud = { hudOn = it; Prefs.setOverlay(ctx, it) },
+                            autoOn = autoOn,
+                            onAuto = { autoOn = it; Prefs.setAutoBoost(ctx, it) },
+                            side = side,
+                            onSide = { side = it; Prefs.setSide(ctx, it) }
                         )
                         else -> LogsTab()
                     }
@@ -224,17 +250,11 @@ fun AppRoot() {
 
 @Composable
 private fun BackgroundGlow(active: Boolean) {
-    val inf = rememberInfiniteTransition(label = "bg")
-    val pulse by inf.animateFloat(
-        0.5f, 1f,
-        infiniteRepeatable(tween(2200, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "pulse"
-    )
-    val a by animateFloatAsState(if (active) 0.38f else 0.16f, tween(800), label = "a")
+    val a by animateFloatAsState(if (active) 0.34f else 0.16f, tween(800), label = "a")
     Canvas(Modifier.fillMaxSize()) {
         drawRect(
             Brush.radialGradient(
-                listOf(Red.copy(alpha = a * pulse), Color.Transparent),
+                listOf(Red.copy(alpha = a), Color.Transparent),
                 center = Offset(size.width / 2f, 0f),
                 radius = size.width * 1.1f
             )
@@ -244,8 +264,6 @@ private fun BackgroundGlow(active: Boolean) {
 
 @Composable
 private fun Header(active: Boolean) {
-    val inf = rememberInfiniteTransition(label = "hdr")
-    val shift by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(2200, easing = LinearEasing)), label = "shift")
     val chipBg by animateColorAsState(if (active) Red else Panel2, tween(400), label = "chip")
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
@@ -256,16 +274,10 @@ private fun Header(active: Boolean) {
                 Text("GAME ", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic, letterSpacing = 2.sp)
                 Text("SPACE", color = Red, fontSize = 24.sp, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic, letterSpacing = 2.sp)
             }
-            Canvas(Modifier.padding(top = 6.dp).width(130.dp).height(3.dp).clipToBounds()) {
-                drawRect(Color(0x33FFFFFF))
-                val w = size.width * 0.45f
-                val x = (size.width + w) * shift - w
-                drawRect(
-                    Brush.horizontalGradient(listOf(Color.Transparent, Red, Color.Transparent), startX = x, endX = x + w),
-                    topLeft = Offset(x, 0f),
-                    size = Size(w, size.height)
-                )
-            }
+            Box(
+                Modifier.padding(top = 6.dp).width(130.dp).height(3.dp)
+                    .background(Brush.horizontalGradient(listOf(Red, Color.Transparent)))
+            )
         }
         Box(
             Modifier.clip(RoundedCornerShape(50)).background(chipBg).padding(horizontal = 14.dp, vertical = 7.dp)
@@ -347,4 +359,11 @@ private fun LaunchOverlay(g: GameItem, p: Float) {
             Text("MENGAKTIFKAN BOOST...", color = Color(0xCCFFFFFF), fontSize = 11.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold)
         }
     }
+}
+
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

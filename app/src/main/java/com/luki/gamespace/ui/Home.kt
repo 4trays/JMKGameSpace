@@ -57,6 +57,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -69,7 +70,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
@@ -175,11 +179,28 @@ private fun StatChip(label: String, value: String, valueColor: Color, modifier: 
 
 @Composable
 private fun BoostRing(active: Boolean, ramPct: Int, onClick: () -> Unit) {
-    val inf = rememberInfiniteTransition(label = "ring")
-    val chase by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(2600, easing = LinearEasing)), label = "chase")
-    val pulse by inf.animateFloat(0.55f, 1f, infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "pulse")
-    val color by animateColorAsState(if (active) Red else Color(0xFF5A5A66), tween(500), label = "col")
-    val sweep by animateFloatAsState(ramPct * 3.6f, tween(900), label = "sweep")
+    val density = LocalDensity.current
+    val color by animateColorAsState(if (active) Red else Color(0xFF5A5A66), tween(400), label = "col")
+    val sweep by animateFloatAsState(ramPct * 3.6f, tween(700), label = "sweep")
+    val glow by animateFloatAsState(if (active) 0.40f else 0.10f, tween(500), label = "glow")
+    var chase by remember { mutableFloatStateOf(0f) }
+    val fg = AppState.foreground
+
+    // Animasi cuma jalan pas boost aktif & app kelihatan, dibatasi ~30fps -> hemat GPU, nggak panas.
+    LaunchedEffect(active, fg) {
+        if (!active || !fg) return@LaunchedEffect
+        var last = System.nanoTime()
+        while (true) {
+            delay(33)
+            val now = System.nanoTime()
+            chase = (chase + (now - last) / 2_600_000_000f) % 1f
+            last = now
+        }
+    }
+
+    val dash = remember(density) {
+        with(density) { PathEffect.dashPathEffect(floatArrayOf(2.5.dp.toPx(), 7.dp.toPx())) }
+    }
     val src = remember { MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
     val sc by animateFloatAsState(if (pressed) 0.94f else 1f, spring(dampingRatio = 0.5f), label = "sc")
@@ -192,15 +213,12 @@ private fun BoostRing(active: Boolean, ramPct: Int, onClick: () -> Unit) {
         Canvas(Modifier.fillMaxSize()) {
             val half = size.minDimension / 2f
             val stroke = 12.dp.toPx()
-            val pad = 24.dp.toPx()
+            val pad = 28.dp.toPx()
             val arcSize = Size(size.width - pad * 2, size.height - pad * 2)
             val tl = Offset(pad, pad)
 
             drawCircle(
-                Brush.radialGradient(
-                    listOf(color.copy(alpha = if (active) 0.45f * pulse else 0.10f), Color.Transparent),
-                    center = center, radius = half
-                ),
+                Brush.radialGradient(listOf(color.copy(alpha = glow), Color.Transparent), center = center, radius = half),
                 radius = half
             )
             drawCircle(Color(0xFF0E0E12), radius = half - pad - stroke)
@@ -213,19 +231,17 @@ private fun BoostRing(active: Boolean, ramPct: Int, onClick: () -> Unit) {
                 topLeft = tl, size = arcSize, style = Stroke(stroke, cap = StrokeCap.Round)
             )
 
-            val r1 = half - 6.dp.toPx()
-            val r2 = r1 - 9.dp.toPx()
-            for (i in 0 until 60) {
-                val ang = Math.toRadians(i * 6.0 - 90.0)
-                val a = ((i / 60f) + chase) % 1f
-                val al = if (active) a * a else 0.12f
-                drawLine(
-                    color = color.copy(alpha = al.coerceIn(0f, 1f)),
-                    start = Offset(center.x + (r1 * cos(ang)).toFloat(), center.y + (r1 * sin(ang)).toFloat()),
-                    end = Offset(center.x + (r2 * cos(ang)).toFloat(), center.y + (r2 * sin(ang)).toFloat()),
-                    strokeWidth = 2.5.dp.toPx(),
-                    cap = StrokeCap.Round
-                )
+            val rTick = half - 10.dp.toPx()
+            val tickStyle = Stroke(width = 9.dp.toPx(), pathEffect = dash)
+            if (active) {
+                rotate(chase * 360f, center) {
+                    drawCircle(
+                        Brush.sweepGradient(0f to Color.Transparent, 0.55f to Color.Transparent, 1f to color, center = center),
+                        radius = rTick, center = center, style = tickStyle
+                    )
+                }
+            } else {
+                drawCircle(color.copy(alpha = 0.14f), radius = rTick, center = center, style = tickStyle)
             }
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -278,11 +294,9 @@ private fun GameCard(g: GameItem, index: Int, onClick: () -> Unit, onLong: () ->
 
 @Composable
 private fun AddCard(onClick: () -> Unit) {
-    val inf = rememberInfiniteTransition(label = "add")
-    val p by inf.animateFloat(0.25f, 0.8f, infiniteRepeatable(tween(1200), RepeatMode.Reverse), label = "p")
     val shape = RoundedCornerShape(18.dp)
     Box(
-        Modifier.height(112.dp).clip(shape).border(1.5.dp, Red.copy(alpha = p), shape).clickable { onClick() },
+        Modifier.height(112.dp).clip(shape).border(1.5.dp, Red.copy(alpha = 0.6f), shape).clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
         Icon(Icons.Filled.Add, null, tint = Red, modifier = Modifier.size(34.dp))
