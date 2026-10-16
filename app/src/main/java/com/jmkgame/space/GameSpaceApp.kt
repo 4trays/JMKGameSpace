@@ -7,6 +7,7 @@ class GameSpaceApp : Application() {
     override fun onCreate() {
         super.onCreate()
         CrashLogger.install(this)
+        LocalDataStore.saveDeviceProfile(this)
         if (!CrashLogger.isCrashProcess()) {
             CrashLogger.log(
                 this, "I", "App",

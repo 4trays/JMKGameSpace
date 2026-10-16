@@ -61,11 +61,7 @@ object FpsMonitor {
     }
 
     private fun shizukuProcess(cmd: String): Process {
-        val m = Shizuku::class.java.getDeclaredMethod(
-            "newProcess", Array<String>::class.java, Array<String>::class.java, String::class.java
-        )
-        m.isAccessible = true
-        return m.invoke(null, arrayOf("sh", "-c", cmd), null, null) as Process
+        return Shizuku.newProcess(arrayOf("sh", "-c", cmd), null, null)
     }
 
     private fun exec(cmd: String, viaRoot: Boolean): String? = try {

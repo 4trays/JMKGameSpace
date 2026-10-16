@@ -32,7 +32,7 @@ object Palette {
 }
 
 object ImageStore {
-    /** Simpan gambar dari galeri ke storage internal (diperkecil + dirotasi sesuai EXIF). */
+    /** Simpan gambar ke folder app di Android/data (diperkecil + dirotasi sesuai EXIF). */
     fun saveFromUri(c: Context, uri: Uri, name: String, maxSide: Int): Boolean {
         return try {
             val cr = c.contentResolver
@@ -62,7 +62,7 @@ object ImageStore {
                 m.postScale(sc, sc)
             }
             val out = Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, m, true)
-            File(c.filesDir, name).outputStream().use { out.compress(Bitmap.CompressFormat.JPEG, 88, it) }
+            LocalDataStore.file(c, name).outputStream().use { out.compress(Bitmap.CompressFormat.JPEG, 88, it) }
             true
         } catch (t: Throwable) {
             CrashLogger.log(c, "E", "Image", "Gagal simpan gambar $name", t)
@@ -71,12 +71,12 @@ object ImageStore {
     }
 
     fun load(c: Context, name: String): Bitmap? = runCatching {
-        val f = File(c.filesDir, name)
+        val f = LocalDataStore.file(c, name)
         if (f.exists()) BitmapFactory.decodeFile(f.absolutePath) else null
     }.getOrNull()
 
     fun delete(c: Context, name: String) {
-        runCatching { File(c.filesDir, name).delete() }
+        runCatching { LocalDataStore.file(c, name).delete() }
     }
 
     private fun roundedSquare(src: Bitmap, size: Int): Bitmap {
