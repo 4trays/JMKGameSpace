@@ -1,4 +1,4 @@
-package com.luki.gamespace
+package com.jmkgame.space
 
 import android.content.Context
 import android.content.Intent

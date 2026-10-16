@@ -1,4 +1,4 @@
-package com.luki.gamespace
+package com.jmkgame.space
 
 import android.app.Application
 import android.os.Build

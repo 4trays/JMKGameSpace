@@ -1,4 +1,4 @@
-package com.luki.gamespace
+package com.jmkgame.space
 
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager

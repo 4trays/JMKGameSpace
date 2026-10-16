@@ -1,4 +1,4 @@
-package com.luki.gamespace
+package com.jmkgame.space
 
 import android.Manifest
 import android.app.ActivityManager
@@ -53,6 +53,15 @@ object Prefs {
     /** "L" atau "R" */
     fun side(c: Context) = p(c).getString("side", "L") ?: "L"
     fun setSide(c: Context, v: String) { p(c).edit().putString("side", v).apply() }
+
+    fun accent(c: Context) = p(c).getInt("accent", 0xFFFF1F3D.toInt())
+    fun setAccent(c: Context, v: Int) { p(c).edit().putInt("accent", v).apply() }
+
+    fun bgDim(c: Context) = p(c).getFloat("bg_dim", 0.6f)
+    fun setBgDim(c: Context, v: Float) { p(c).edit().putFloat("bg_dim", v).apply() }
+
+    fun fps(c: Context) = p(c).getBoolean("fps", true)
+    fun setFps(c: Context, v: Boolean) { p(c).edit().putBoolean("fps", v).apply() }
 
     fun handleY(c: Context) = p(c).getFloat("handle_y", 0.35f)
     fun setHandleY(c: Context, v: Float) { p(c).edit().putFloat("handle_y", v).apply() }

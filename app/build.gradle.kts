@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.luki.gamespace"
+    namespace = "com.jmkgame.space"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "jmk48game.space"
+        applicationId = "com.jmkgame.space"
         minSdk = 26
         targetSdk = 34
         versionCode = 2
@@ -55,4 +55,6 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
 }

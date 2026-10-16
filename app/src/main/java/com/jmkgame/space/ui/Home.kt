@@ -1,4 +1,4 @@
-package com.luki.gamespace.ui
+package com.jmkgame.space.ui
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
@@ -84,10 +84,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.luki.gamespace.BoostManager
-import com.luki.gamespace.GameItem
-import com.luki.gamespace.GameRepo
-import com.luki.gamespace.Stats
+import com.jmkgame.space.BoostManager
+import com.jmkgame.space.GameItem
+import com.jmkgame.space.GameRepo
+import com.jmkgame.space.Stats
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext

@@ -1,12 +1,12 @@
-package com.luki.gamespace
+package com.jmkgame.space
 
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import com.luki.gamespace.ui.CrashScreen
-import com.luki.gamespace.ui.GameSpaceTheme
+import com.jmkgame.space.ui.CrashScreen
+import com.jmkgame.space.ui.GameSpaceTheme
 
 class CrashActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {

@@ -1,4 +1,4 @@
-package com.luki.gamespace
+package com.jmkgame.space
 
 import android.content.Context
 import android.content.Intent
@@ -25,6 +25,7 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.graphics.ColorUtils
 import kotlin.concurrent.thread
 import kotlin.math.abs
 
@@ -38,8 +39,8 @@ class Sidebar(
     private val onStop: () -> Unit,
     private val onChanged: () -> Unit
 ) {
-    private val red = 0xFFFF1F3D.toInt()
-    private val redDark = 0xFF8E0A1E.toInt()
+    private val red = Prefs.accent(ctx)
+    private val redDark = ColorUtils.blendARGB(Prefs.accent(ctx), Color.BLACK, 0.55f)
     private val panelBg = 0xF2111116.toInt()
     private val tileBg = 0xFF1F1F27.toInt()
     private val dim = 0xFF9A9AA6.toInt()
@@ -63,6 +64,7 @@ class Sidebar(
     private var tRam: TextView? = null
     private var tBatt: TextView? = null
     private var tHz: TextView? = null
+    private var tFps: TextView? = null
     private var modeViews: List<TextView> = emptyList()
     private var btnDnd: TextView? = null
     private var btnHud: TextView? = null
@@ -123,7 +125,7 @@ class Sidebar(
             y = (Prefs.handleY(ctx) * screenH()).toInt().coerceIn(0, (screenH() - h).coerceAtLeast(0))
         }
         val fl = FrameLayout(ctx)
-        val pill = View(ctx).apply { background = rounded(0xCCFF1F3D.toInt(), dp(3)) }
+        val pill = View(ctx).apply { background = rounded((red and 0xFFFFFF) or (0xCC shl 24), dp(3)) }
         fl.addView(
             pill,
             FrameLayout.LayoutParams(dp(5), dp(44), Gravity.CENTER_VERTICAL or (if (left) Gravity.START else Gravity.END))
@@ -239,7 +241,7 @@ class Sidebar(
         r.addView(sc, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
         val scroll = ScrollView(ctx).apply {
-            background = rounded(panelBg, dp(22), 0x55FF1F3D)
+            background = rounded(panelBg, dp(22), (red and 0xFFFFFF) or (0x55 shl 24))
             isVerticalScrollBarEnabled = false
             overScrollMode = View.OVER_SCROLL_NEVER
         }
@@ -251,8 +253,8 @@ class Sidebar(
 
         // Header
         val head = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        head.addView(tv("GAME ", 17f, Color.WHITE, bold = true, italic = true))
-        head.addView(tv("SPACE", 17f, red, bold = true, italic = true))
+        head.addView(tv("JMK ", 16f, red, bold = true, italic = true))
+        head.addView(tv("GAME SPACE", 16f, Color.WHITE, bold = true, italic = true))
         head.addView(View(ctx), LinearLayout.LayoutParams(0, 1, 1f))
         head.addView(tv("✕", 18f, dim, bold = true).apply {
             setPadding(dp(12), dp(4), dp(4), dp(4))
@@ -276,12 +278,12 @@ class Sidebar(
                 setPadding(0, dp(8), 0, dp(8))
             }
             box.addView(tv(title, 8f, dim, bold = true))
-            val v = tv("--", 13f, Color.WHITE, bold = true).apply { setPadding(0, dp(3), 0, 0) }
+            val v = tv("--", 12f, Color.WHITE, bold = true).apply { setPadding(0, dp(3), 0, 0) }
             box.addView(v)
             statRow.addView(box, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(2), 0, dp(2), 0) })
             return v
         }
-        tTemp = tile("TEMP"); tRam = tile("RAM"); tBatt = tile("BATT"); tHz = tile("Hz")
+        tTemp = tile("TEMP"); tRam = tile("RAM"); tFps = tile("FPS"); tBatt = tile("BATT"); tHz = tile("Hz")
         col.addView(statRow)
 
         // Mode
@@ -384,7 +386,7 @@ class Sidebar(
         runCatching { root?.let { wm.removeView(it) } }
         root = null; card = null; scrim = null
         modeViews = emptyList()
-        tTemp = null; tRam = null; tBatt = null; tHz = null
+        tTemp = null; tRam = null; tBatt = null; tHz = null; tFps = null
         btnDnd = null; btnHud = null; btnBoost = null
     }
 
@@ -457,11 +459,12 @@ class Sidebar(
         paint(btnBoost, "BOOST", BoostManager.isActive(ctx))
     }
 
-    fun refresh(s: Stats, hz: Int) {
+    fun refresh(s: Stats, hz: Int, fps: Int) {
         if (!open) return
         tTemp?.text = "%.1f°".format(s.tempC)
         tTemp?.setTextColor(if (s.tempC >= 42f) 0xFFFFB020.toInt() else Color.WHITE)
         tRam?.text = "${s.ramPct}%"
+        tFps?.text = if (fps >= 0) fps.toString() else "--"
         tBatt?.text = "${s.batt}%" + if (s.charging) "+" else ""
         tHz?.text = hz.toString()
         refreshToggles()

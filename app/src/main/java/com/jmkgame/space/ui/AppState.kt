@@ -1,4 +1,4 @@
-package com.luki.gamespace.ui
+package com.jmkgame.space.ui
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf

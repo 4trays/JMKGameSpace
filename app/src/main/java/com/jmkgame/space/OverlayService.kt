@@ -1,4 +1,4 @@
-package com.luki.gamespace
+package com.jmkgame.space
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -43,6 +43,7 @@ class OverlayService : Service() {
     private var inGame = false
     private var leaveSince = 0L
     private var autoBusy = false
+    @Volatile private var fpsBusy = false
     private var noAccessLogged = false
 
     private val tick = object : Runnable {
@@ -109,7 +110,7 @@ class OverlayService : Service() {
         )
         val n = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_bolt)
-            .setContentTitle("Game Space aktif")
+            .setContentTitle("JMK Game Space aktif")
             .setContentText("Smart Sidebar siap di game kamu")
             .setContentIntent(openPi)
             .setOngoing(true)
@@ -160,9 +161,11 @@ class OverlayService : Service() {
                 onEnterGame(fg)
             }
             ensureUi(fg)
+            maybeSampleFps(fg)
             val s = BoostManager.stats(this)
             updateUi(s)
-            return if (sidebar?.isOpen == true) 1000L else 1500L
+            val fastFps = Prefs.fps(this) && Prefs.overlay(this)
+            return if (sidebar?.isOpen == true || fastFps) 1000L else 1500L
         }
 
         hideUi()
@@ -175,6 +178,25 @@ class OverlayService : Service() {
             }
         }
         return 1500L
+    }
+
+    /** FPS cuma disampling kalau lagi ditampilkan (HUD aktif / panel kebuka), 1x per tick, di thread terpisah. */
+    private fun maybeSampleFps(pkg: String) {
+        if (!Prefs.fps(this) || fpsBusy) return
+        if (!Prefs.overlay(this) && sidebar?.isOpen != true) return
+        val st = FpsMonitor.state(this, true)
+        if (st != FpsState.SHIZUKU_READY && st != FpsState.ROOT) {
+            FpsMonitor.fps = -1
+            return
+        }
+        fpsBusy = true
+        thread {
+            try {
+                FpsMonitor.sample(pkg, st == FpsState.ROOT)
+            } finally {
+                fpsBusy = false
+            }
+        }
     }
 
     private fun onEnterGame(pkg: String) {
@@ -231,9 +253,11 @@ class OverlayService : Service() {
             (getSystemService(Context.DISPLAY_SERVICE) as DisplayManager)
                 .getDisplay(Display.DEFAULT_DISPLAY).refreshRate.toInt()
         }.getOrDefault(60)
-        sidebar?.refresh(s, hz)
+        val fps = if (Prefs.fps(this)) FpsMonitor.fps else -1
+        sidebar?.refresh(s, hz, fps)
         hud?.let {
-            val t = "TEMP %.1f°C  RAM %d%%\nBATT %d%%%s  %dHz".format(s.tempC, s.ramPct, s.batt, if (s.charging) "+" else "", hz)
+            val fpsTxt = if (!Prefs.fps(this)) "" else "FPS " + (if (fps >= 0) fps.toString() else "--") + "  "
+            val t = fpsTxt + "TEMP %.1f°C\nRAM %d%%  BATT %d%%%s  %dHz".format(s.tempC, s.ramPct, s.batt, if (s.charging) "+" else "", hz)
             if (it.text.toString() != t) it.text = t
         }
     }
@@ -267,7 +291,7 @@ class OverlayService : Service() {
             background = GradientDrawable().apply {
                 setColor(0xCC0A0A0D.toInt())
                 cornerRadius = dp(10).toFloat()
-                setStroke(dp(1), 0xFFFF1F3D.toInt())
+                setStroke(dp(1), Prefs.accent(this@OverlayService))
             }
             text = "..."
         }
@@ -303,7 +327,7 @@ class OverlayService : Service() {
     }
 
     companion object {
-        const val ACTION_STOP = "jmk48game.space.STOP"
+        const val ACTION_STOP = "com.jmkgame.space.STOP"
         private const val CHANNEL = "gamespace_boost"
         private const val NOTIF_ID = 1001
         private const val LEAVE_GRACE_MS = 8000L

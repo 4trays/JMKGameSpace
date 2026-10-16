@@ -1,4 +1,4 @@
-package com.luki.gamespace.ui
+package com.jmkgame.space.ui
 
 import android.Manifest
 import android.content.Intent
@@ -66,9 +66,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.luki.gamespace.BoostManager
-import com.luki.gamespace.CrashLogger
-import com.luki.gamespace.Perms
+import com.jmkgame.space.BoostManager
+import com.jmkgame.space.CrashLogger
+import com.jmkgame.space.FpsMonitor
+import com.jmkgame.space.FpsState
+import com.jmkgame.space.Perms
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -87,13 +89,21 @@ fun BoostTab(
     autoOn: Boolean,
     onAuto: (Boolean) -> Unit,
     side: String,
-    onSide: (String) -> Unit
+    onSide: (String) -> Unit,
+    fpsOn: Boolean,
+    onFps: (Boolean) -> Unit
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val perms by produceState(Perms()) {
         while (true) {
             value = BoostManager.perms(ctx)
+            delay(1000)
+        }
+    }
+    val fpsState by produceState(FpsState.UNAVAILABLE, fpsOn) {
+        while (true) {
+            value = FpsMonitor.state(ctx, fpsOn)
             delay(1000)
         }
     }
@@ -130,6 +140,7 @@ fun BoostTab(
         ToggleRow("Smart Sidebar", "Panel samping, cuma muncul di game yang kamu add", sidebarOn, onSidebar)
         ToggleRow("Auto-boost", "Boost otomatis pas game dibuka, restore pas keluar", autoOn, onAuto)
         ToggleRow("HUD monitor", "Teks suhu/RAM/baterai kecil di atas game", hudOn, onHud)
+        ToggleRow("FPS monitor", "FPS game di HUD & panel sidebar (butuh Shizuku atau root)", fpsOn, onFps)
         Text("POSISI SIDEBAR", color = Dim, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
         SideSelector(side, onSide)
 
@@ -165,6 +176,26 @@ fun BoostTab(
         }
         PermRow("Abaikan optimasi baterai", "Biar sidebar nggak dimatiin sistem pas main", perms.battery) {
             open(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, true)
+        }
+        val fpsOk = fpsState == FpsState.SHIZUKU_READY || fpsState == FpsState.ROOT
+        val fpsTitle: String
+        val fpsDesc: String
+        val fpsLabel: String
+        when (fpsState) {
+            FpsState.SHIZUKU_READY -> { fpsTitle = "FPS: Shizuku aktif"; fpsDesc = "FPS game dibaca lewat Shizuku"; fpsLabel = "" }
+            FpsState.ROOT -> { fpsTitle = "FPS: akses root aktif"; fpsDesc = "FPS game dibaca lewat root"; fpsLabel = "" }
+            FpsState.SHIZUKU_NO_PERMISSION -> { fpsTitle = "FPS: izinkan Shizuku"; fpsDesc = "Shizuku jalan, tinggal kasih izin ke app ini"; fpsLabel = "IZINKAN" }
+            FpsState.SHIZUKU_NOT_RUNNING -> { fpsTitle = "FPS: Shizuku belum jalan"; fpsDesc = "Buka Shizuku lalu start (wireless debugging)"; fpsLabel = "BUKA" }
+            FpsState.UNAVAILABLE -> { fpsTitle = "FPS: butuh Shizuku atau root"; fpsDesc = "Android nggak ngizinin app biasa baca FPS app lain"; fpsLabel = "UNDUH" }
+        }
+        PermRow(fpsTitle, fpsDesc, fpsOk, fpsLabel) {
+            when (fpsState) {
+                FpsState.SHIZUKU_NO_PERMISSION -> FpsMonitor.requestShizuku()
+                FpsState.SHIZUKU_NOT_RUNNING -> runCatching {
+                    ctx.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")?.let { ctx.startActivity(it) }
+                }
+                else -> runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/"))) }
+            }
         }
         PermRow("Akses Jangan Ganggu (DND)", "Untuk blokir notifikasi pas main", perms.dnd) {
             open(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS, false)
@@ -268,7 +299,7 @@ private fun ModeSelector(mode: BoostManager.Mode, onMode: (BoostManager.Mode) ->
 }
 
 @Composable
-private fun PermRow(title: String, desc: String, granted: Boolean, onGrant: () -> Unit) {
+private fun PermRow(title: String, desc: String, granted: Boolean, actionLabel: String = "IZINKAN", onGrant: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Panel).padding(14.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -284,7 +315,7 @@ private fun PermRow(title: String, desc: String, granted: Boolean, onGrant: () -
                 onClick = onGrant,
                 colors = ButtonDefaults.buttonColors(containerColor = Red),
                 shape = RoundedCornerShape(12.dp)
-            ) { Text("IZINKAN", fontWeight = FontWeight.Black, fontSize = 11.sp) }
+            ) { Text(actionLabel, fontWeight = FontWeight.Black, fontSize = 11.sp) }
         }
     }
 }

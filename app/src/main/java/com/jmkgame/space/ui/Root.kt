@@ -1,4 +1,4 @@
-package com.luki.gamespace.ui
+package com.jmkgame.space.ui
 
 import android.app.Activity
 import android.content.Context
@@ -74,18 +74,28 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.luki.gamespace.BoostManager
-import com.luki.gamespace.CrashLogger
-import com.luki.gamespace.GameItem
-import com.luki.gamespace.GameRepo
-import com.luki.gamespace.Prefs
-import com.luki.gamespace.Stats
+import com.jmkgame.space.BoostManager
+import com.jmkgame.space.CrashLogger
+import com.jmkgame.space.GameItem
+import com.jmkgame.space.GameRepo
+import com.jmkgame.space.Prefs
+import com.jmkgame.space.Stats
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.hypot
+import androidx.compose.foundation.layout.offset
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalHapticFeedback
+import kotlin.math.pow
 
 @Composable
 fun AppRoot() {
@@ -100,11 +110,13 @@ fun AppRoot() {
     var sidebarOn by remember { mutableStateOf(Prefs.sidebar(ctx)) }
     var hudOn by remember { mutableStateOf(Prefs.overlay(ctx)) }
     var autoOn by remember { mutableStateOf(Prefs.autoBoost(ctx)) }
+    var fpsOn by remember { mutableStateOf(Prefs.fps(ctx)) }
     var side by remember { mutableStateOf(Prefs.side(ctx)) }
     val fg = AppState.foreground
     var showAdd by remember { mutableStateOf(false) }
     var removeTarget by remember { mutableStateOf<GameItem?>(null) }
     val launchP = remember { Animatable(0f) }
+    val haptic = LocalHapticFeedback.current
 
     val stats by produceState(Stats(), fg) {
         if (fg) {
@@ -118,6 +130,7 @@ fun AppRoot() {
     LaunchedEffect(Unit) {
         games = withContext(Dispatchers.Default) { GameRepo.loadSaved(ctx) }
     }
+    LaunchedEffect(Unit) { CosmeticState.loadImages(ctx) }
     LaunchedEffect(fg) {
         if (!fg) return@LaunchedEffect
         while (true) {
@@ -131,6 +144,7 @@ fun AppRoot() {
 
     LaunchedEffect(launching) {
         val g = launching ?: return@LaunchedEffect
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         launchP.snapTo(0f)
         BoostManager.syncService(ctx)
         val svc = BoostManager.serviceWanted(ctx)
@@ -147,18 +161,23 @@ fun AppRoot() {
             launchP.snapTo(0f)
         } else {
             // tutup UI biar memori kosong; sidebar tetap hidup di service
-            delay(300)
+            delay(120)
             ctx.findActivity()?.finish()
         }
     }
 
     Box(Modifier.fillMaxSize().background(Bg)) {
+        val bgImg = CosmeticState.bg
+        if (bgImg != null) {
+            Image(bgImg, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            Box(Modifier.fillMaxSize().drawBehind { drawRect(Color.Black.copy(alpha = CosmeticState.dim)) })
+        }
         BackgroundGlow(boostActive)
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
             Header(boostActive)
             AnimatedVisibility(crashPending) {
                 CrashBanner {
-                    tab = 2
+                    tab = 3
                     CrashLogger.clearPending(ctx)
                     crashPending = false
                 }
@@ -202,8 +221,11 @@ fun AppRoot() {
                             autoOn = autoOn,
                             onAuto = { autoOn = it; Prefs.setAutoBoost(ctx, it) },
                             side = side,
-                            onSide = { side = it; Prefs.setSide(ctx, it) }
+                            onSide = { side = it; Prefs.setSide(ctx, it) },
+                            fpsOn = fpsOn,
+                            onFps = { fpsOn = it; Prefs.setFps(ctx, it) }
                         )
+                        2 -> StyleTab()
                         else -> LogsTab()
                     }
                 }
@@ -211,7 +233,7 @@ fun AppRoot() {
             BottomBar(tab) { tab = it }
         }
 
-        launching?.let { LaunchOverlay(it, launchP.value) }
+        launching?.let { LaunchOverlay(it, mode, launchP) }
 
         if (showAdd) {
             AddGameDialog(
@@ -271,8 +293,8 @@ private fun Header(active: Boolean) {
     ) {
         Column(Modifier.weight(1f)) {
             Row {
-                Text("GAME ", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic, letterSpacing = 2.sp)
-                Text("SPACE", color = Red, fontSize = 24.sp, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic, letterSpacing = 2.sp)
+                Text("JMK ", color = Red, fontSize = 20.sp, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic, letterSpacing = 1.sp)
+                Text("GAME SPACE", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic, letterSpacing = 1.sp)
             }
             Box(
                 Modifier.padding(top = 6.dp).width(130.dp).height(3.dp)
@@ -309,6 +331,7 @@ private fun BottomBar(sel: Int, onSel: (Int) -> Unit) {
     val items = listOf(
         "GAMES" to Icons.Filled.SportsEsports,
         "BOOST" to Icons.Filled.Bolt,
+        "STYLE" to Icons.Filled.Palette,
         "LOGS" to Icons.Filled.BugReport
     )
     Row(
@@ -330,37 +353,81 @@ private fun BottomBar(sel: Int, onSel: (Int) -> Unit) {
     }
 }
 
+private fun easeOutBack(t: Float): Float {
+    val c1 = 1.70158f
+    val c3 = c1 + 1f
+    val x = t - 1f
+    return 1f + c3 * x.pow(3) + c1 * x.pow(2)
+}
+
+/**
+ * Animasi masuk game. Semua nilai animasi dibaca di fase draw / graphicsLayer saja
+ * (nggak ada recomposition per frame), cuma 1 Canvas + 1 icon, total < 1 detik.
+ */
 @Composable
-private fun LaunchOverlay(g: GameItem, p: Float) {
+private fun LaunchOverlay(g: GameItem, mode: BoostManager.Mode, p: State<Float>) {
+    val stage by remember { derivedStateOf { if (p.value < 0.35f) 0 else if (p.value < 0.7f) 1 else 2 } }
+    val label = when (stage) {
+        0 -> if (mode == BoostManager.Mode.STANDARD) "MENYIAPKAN" else "MEMBERSIHKAN RAM"
+        1 -> if (mode == BoostManager.Mode.STANDARD) "MEMUAT SIDEBAR" else "MODE ${mode.label.uppercase()}"
+        else -> "SIAP MAIN!"
+    }
     Box(
         Modifier.fillMaxSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
         contentAlignment = Alignment.Center
     ) {
         Canvas(Modifier.fillMaxSize()) {
-            val r = (hypot(size.width, size.height) * p).coerceAtLeast(1f)
+            val pv = p.value
+            drawRect(Bg.copy(alpha = (pv * 3f).coerceIn(0f, 0.96f)))
+            val gr = size.minDimension * (0.35f + 0.6f * pv)
             drawCircle(
-                Brush.radialGradient(listOf(Red, RedDark, Bg), center = center, radius = r),
-                radius = r,
-                center = center
+                Brush.radialGradient(
+                    listOf(Red.copy(alpha = 0.5f * (pv * 2f).coerceIn(0f, 1f)), Color.Transparent),
+                    center = center, radius = gr
+                ),
+                radius = gr, center = center
             )
+            val lineW = 240.dp.toPx()
+            for (i in 0 until 5) {
+                val y = size.height * (0.2f + i * 0.15f)
+                val x = ((pv * 1.6f + i * 0.23f) % 1f) * (size.width + lineW) - lineW
+                drawRect(
+                    Brush.horizontalGradient(
+                        listOf(Color.Transparent, Red.copy(alpha = 0.55f), Color.Transparent),
+                        startX = x, endX = x + lineW
+                    ),
+                    topLeft = Offset(x, y), size = Size(lineW, 2.dp.toPx())
+                )
+            }
+            val ar = 74.dp.toPx()
+            val st = 5.dp.toPx()
+            val tl = Offset(center.x - ar, center.y - ar)
+            val sz = Size(ar * 2, ar * 2)
+            drawArc(Color(0x33FFFFFF), 0f, 360f, false, tl, sz, style = Stroke(st))
+            drawArc(Red, -90f, 360f * pv, false, tl, sz, style = Stroke(st, cap = StrokeCap.Round))
         }
+        Image(
+            g.icon, null,
+            Modifier.size(96.dp).clip(RoundedCornerShape(24.dp)).graphicsLayer {
+                val pv = p.value
+                val intro = (pv / 0.4f).coerceIn(0f, 1f)
+                val zoom = 1f + 0.35f * ((pv - 0.85f) / 0.15f).coerceIn(0f, 1f)
+                val sc = (0.4f + 0.6f * easeOutBack(intro)) * zoom
+                scaleX = sc
+                scaleY = sc
+                alpha = intro
+            }
+        )
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.graphicsLayer {
-                alpha = (p * 2f).coerceIn(0f, 1f)
-                scaleX = 0.6f + 0.4f * p
-                scaleY = 0.6f + 0.4f * p
-            }
+            modifier = Modifier.offset(y = 125.dp).graphicsLayer { alpha = (p.value * 3f).coerceIn(0f, 1f) }
         ) {
-            Image(g.icon, null, Modifier.size(96.dp).clip(RoundedCornerShape(24.dp)))
-            Spacer(Modifier.height(16.dp))
-            Text(g.label, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
+            Text(g.label, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
             Spacer(Modifier.height(6.dp))
-            Text("MENGAKTIFKAN BOOST...", color = Color(0xCCFFFFFF), fontSize = 11.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold)
+            Text(label, color = Red, fontSize = 11.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold)
         }
     }
 }
-
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
