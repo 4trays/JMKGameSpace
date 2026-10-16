@@ -233,7 +233,7 @@ fun AppRoot() {
             BottomBar(tab) { tab = it }
         }
 
-        launching?.let { LaunchOverlay(it, mode, launchP) }
+        launching?.let { LaunchOverlay(it, mode, launchP.asState()) }
 
         if (showAdd) {
             AddGameDialog(
