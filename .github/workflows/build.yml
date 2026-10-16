@@ -21,7 +21,21 @@ jobs:
           gradle-version: "8.7"
 
       - name: Build release APK
-        run: gradle assembleRelease --stacktrace
+        run: gradle assembleRelease --console=plain --stacktrace > build.log 2>&1
+
+      - name: Ringkasan error
+        if: failure()
+        run: |
+          echo "=== ERROR KOTLIN / R8 ==="
+          grep -E "^e: |ERROR:|Missing class|error:" build.log | head -40 || true
+          echo "=== WHAT WENT WRONG ==="
+          grep -A8 "What went wrong" build.log | head -30 || true
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: build-log
+          path: build.log
 
       - uses: actions/upload-artifact@v4
         with:
